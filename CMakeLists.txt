@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.31)
+project(pqc_tls C)
+
+set(CMAKE_C_STANDARD 11)
+
+find_package(OpenSSL REQUIRED)
+
+add_executable(pqc_tls_client client.c)
+target_link_libraries(pqc_tls_client OpenSSL::SSL OpenSSL::Crypto)
+
+add_executable(pqc_tls_server server.c)
+target_link_libraries(pqc_tls_server OpenSSL::SSL OpenSSL::Crypto)
