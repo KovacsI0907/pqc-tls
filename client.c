@@ -10,14 +10,17 @@
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/crypto.h>
 
-void cleanup(SSL_CTX* ctx, SSL* ssl){
+#include "load_oqs.h"
+
+void cleanup(SSL_CTX* ctx, SSL* ssl, OSSL_LIB_CTX* lib_ctx){
     SSL_free(ssl);
     SSL_CTX_free(ctx);
+    OSSL_LIB_CTX_free(lib_ctx);
 }
 
 int main() {
-
     // CONSTANTS
     const int min_protocol_version = TLS1_3_VERSION; // could also allow TLS1_2_VERSION
     const char* hostname = "localhost";
@@ -26,12 +29,21 @@ int main() {
     const char* message = "Hello there!\n";
     const bool ignore_cert_verify = true;
 
+    // load the OpenQuantumSafe provider (NULL means load it into the default LIB_CTX)
+    // TODO safe to load into default libctx?
+    if (load_oqs_provider(NULL) != 0) {
+        fputs("`load_oqs_provider` failed. Dumping OpenSSL error queue.\n", stderr);
+        ERR_print_errors_fp(stderr);
+        return 1;
+    }
+
     // create ssl context used for instantiating SSL objects
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
     SSL* ssl = NULL;
     if(ctx == NULL){
         printf("Failed to create SSL_CTX\n");
-        cleanup(ctx, ssl);
+        ERR_print_errors_fp(stderr);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
@@ -44,13 +56,13 @@ int main() {
     // set location of trusted CA's certificates to the default location
     if(!SSL_CTX_set_default_verify_paths(ctx)){
         printf("Failed to set default trusted certificate store\n");
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
     if(!SSL_CTX_set_min_proto_version(ctx, min_protocol_version)){
         printf("Failed to set min protocol version\n");
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
@@ -58,11 +70,20 @@ int main() {
     ssl = SSL_new(ctx);
     if(ssl == NULL){
         printf("Failed to create SSL object");
-        cleanup(ctx, ssl);
+        ERR_print_errors_fp(stderr);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
-    // we could use sockets directly, but the BIO provides it's own abstraction for that
+    // set PQC algorithms for the handshake
+    if (SSL_set1_groups_list(ssl, "p256_mlkem512:mlkem1024") != 1) {
+        fprintf(stderr, "Failed to set PQC groups\n");
+        ERR_print_errors_fp(stderr);
+        cleanup(ctx, ssl, NULL);
+        return 1;
+    }
+
+    // we could use sockets directly, but the BIO provides its own abstraction for that
     int sock;
     BIO_ADDRINFO* res;
     const BIO_ADDRINFO* ai = NULL;
@@ -70,7 +91,7 @@ int main() {
     // get the ip addresses associated with this hostname
     if(!BIO_lookup_ex(hostname, port, BIO_LOOKUP_CLIENT, inet_family, SOCK_STREAM, 0, &res)){
         printf("No IP adresses found for the given hostname");
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
@@ -80,7 +101,7 @@ int main() {
         sock = BIO_socket(BIO_ADDRINFO_family(ai), SOCK_STREAM, 0, 0);
         if (sock == -1)
             continue;
-        
+
         //attempt to connect to other host
         if(!BIO_connect(sock, BIO_ADDRINFO_address(ai), BIO_SOCK_NODELAY)){
             BIO_closesocket(sock);
@@ -99,7 +120,7 @@ int main() {
     if(bio == NULL){
         printf("Failed to create BIO object\n");
         BIO_closesocket(sock);
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
@@ -112,27 +133,27 @@ int main() {
     //set client hostname (which is needed for the client hello message)
     if(!SSL_set_tlsext_host_name(ssl, hostname)) {
         printf("Failed to set hostname\n");
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
     //then set the hostname again for the certificate check
     if(!SSL_set1_host(ssl, hostname)){
         printf("Failed to set the certificate verification\n");
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
     // do handshake
     if (SSL_connect(ssl) < 1) {
         printf("Failed to connect to the server\n");
+        ERR_print_errors_fp(stderr);
         bool cert_error = false;
         // check if the failure happened due to certificate error
-        if (SSL_get_verify_result(ssl) != X509_V_OK){
+        if (SSL_get_verify_result(ssl) != X509_V_OK) {
             printf("Verify error: %s\n", X509_verify_cert_error_string(SSL_get_verify_result(ssl)));
         }
-
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
@@ -140,7 +161,7 @@ int main() {
     size_t written;
     if (!SSL_write_ex(ssl, message, strlen(message), &written)){
         printf("Failed to send message");
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
 
@@ -160,7 +181,7 @@ int main() {
 
     if (SSL_get_error(ssl, 0) != SSL_ERROR_ZERO_RETURN) {
         printf ("Failed reading remaining data\n");
-        cleanup(ctx, ssl);
+        cleanup(ctx, ssl, NULL);
         return 1;
     }
     //if we get here, the other host already closed the connection
@@ -172,6 +193,6 @@ int main() {
 
 
     //cleanup
-    cleanup(ctx, ssl);
+    cleanup(ctx, ssl, NULL);
     return 0;
 }
