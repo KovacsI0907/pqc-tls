@@ -14,6 +14,8 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#include "load_oqs.h"
+
 static const char cache_id[] = "OpenSSL Demo Server";
 
 
@@ -54,12 +56,29 @@ int main()
     const char * port = "7788";
     SSL_CTX *ctx = NULL;
     const int min_protocol_version = TLS1_3_VERSION; // could also allow TLS1_2_VERSION
+    const char* groups = "mlkem1024:frodo640aes";
+
+    // load the OpenQuantumSafe provider (NULL means load it into the default LIB_CTX)
+    // TODO safe to load into default libctx?
+    if (load_oqs_provider(NULL) != 0) {
+        fputs("`load_oqs_provider` failed. Dumping OpenSSL error queue.\n", stderr);
+        ERR_print_errors_fp(stderr);
+        return 1;
+    }
 
     // create server type CTX object
     ctx = SSL_CTX_new(TLS_server_method());
     if (ctx == NULL) {
         ERR_print_errors_fp(stderr);
         errx(res, "Failed to create SSL_CTX");
+    }
+
+    // set PQC algorithms for the handshake
+    if (SSL_CTX_set1_groups_list(ctx, groups) != 1) {
+        fprintf(stderr, "Failed to set PQC groups\n");
+        ERR_print_errors_fp(stderr);
+        SSL_CTX_free(ctx);
+        return 1;
     }
 
     if (!SSL_CTX_set_min_proto_version(ctx, min_protocol_version)) {
