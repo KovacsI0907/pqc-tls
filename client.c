@@ -28,6 +28,7 @@ int main() {
     const int inet_family = AF_INET;
     const char* message = "Hello there!\n";
     const bool ignore_cert_verify = true;
+    const char* groups = "p256_mlkem512:mlkem1024";
 
     // load the OpenQuantumSafe provider (NULL means load it into the default LIB_CTX)
     // TODO safe to load into default libctx?
@@ -76,7 +77,7 @@ int main() {
     }
 
     // set PQC algorithms for the handshake
-    if (SSL_set1_groups_list(ssl, "p256_mlkem512:mlkem1024") != 1) {
+    if (SSL_set1_groups_list(ssl, groups) != 1) {
         fprintf(stderr, "Failed to set PQC groups\n");
         ERR_print_errors_fp(stderr);
         cleanup(ctx, ssl, NULL);
